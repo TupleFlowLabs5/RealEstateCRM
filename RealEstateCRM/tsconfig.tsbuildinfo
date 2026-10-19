@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./server/app.ts","./server/index.ts","./api/[...path].ts","./prisma/seed.ts","./vite.config.ts"],"version":"5.7.3"}
