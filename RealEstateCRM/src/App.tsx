@@ -1,7 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Bell, Search, Plus, ArrowUpRight, ArrowDownRight, LayoutDashboard, Users, UserRound, Handshake, MapPin, CalendarDays, ChartNoAxesCombined, Zap, Settings, ChevronDown, MoreHorizontal, ArrowRight, Clock3, Phone, Mail, SlidersHorizontal, Ellipsis, Building2, Check, TrendingUp, Menu, X, Filter, Download } from 'lucide-react'
+import { Bell, Search, Plus, ArrowUpRight, ArrowDownRight, LayoutDashboard, Users, UserRound, Handshake, MapPin, CalendarDays, ChartNoAxesCombined, Zap, Settings, ChevronDown, MoreHorizontal, ArrowRight, Clock3, Phone, Mail, SlidersHorizontal, Ellipsis, Building2, Check, TrendingUp, Menu, X, Filter, Download, LogOut } from 'lucide-react'
+import { ResourceEditor, ResourcePage, type ResourceKind, type ResourceRecord } from './ResourceManager'
+import AuthPage, { type AuthUser } from './AuthPage'
 
-type Lead = { id: string; name: string; email?: string; phone?: string; project?: string; projectId?: string; source: string; status: string; budget?: number; agent: string; created: string; avatar: string; color: string }
+type Lead = { id: string; databaseId?: string; name: string; email?: string; phone?: string; project?: string; projectId?: string; source: string; status: string; budget?: number; agent: string; created: string; avatar: string; color: string }
+type ApiLead = { id: string; name: string; email?: string | null; phone?: string | null; project?: { name: string } | null; source: string; status: string; budget?: number | null; assignedTo?: { name: string } | null; createdAt: string }
+type ResourceRows = Record<ResourceKind, ResourceRecord[]>
+
+const resourceEndpoints: Record<ResourceKind, string> = { leads: 'leads', users: 'users', partners: 'partners', projects: 'projects', visits: 'visits', bookings: 'bookings', automations: 'automations' }
+const pageResources: Record<string, ResourceKind> = { Leads: 'leads', 'Sales team': 'users', 'Channel partners': 'partners', Projects: 'projects', Inventory: 'projects', 'Site visits': 'visits', Bookings: 'bookings', Automations: 'automations' }
+const emptyResources: ResourceRows = { leads: [], users: [], partners: [], projects: [], visits: [], bookings: [], automations: [] }
 
 const initialLeads: Lead[] = [
   { id: 'EF-2841', name: 'Ananya Sharma', email: 'ananya.s@email.com', phone: '+91 98765 42101', project: 'The Willow Residences', source: 'Instagram', status: 'Qualified', budget: 14500000, agent: 'Rohan Mehta', created: '2 min ago', avatar: 'AS', color: 'rose' },
@@ -13,54 +21,206 @@ const initialLeads: Lead[] = [
 ]
 
 const navSections = [
-  { title: 'WORKSPACE', items: [{ name: 'Overview', icon: LayoutDashboard }, { name: 'Leads', icon: Users, count: '24' }, { name: 'Sales team', icon: UserRound }, { name: 'Channel partners', icon: Handshake }] },
-  { title: 'OPERATIONS', items: [{ name: 'Site visits', icon: MapPin, count: '8' }, { name: 'Bookings', icon: CalendarDays }, { name: 'Reports', icon: ChartNoAxesCombined }] },
+  { title: 'WORKSPACE', items: [{ name: 'Marketing & Sales', icon: LayoutDashboard }, { name: 'Leads', icon: Users, count: '24' }, { name: 'Sales team', icon: UserRound }, { name: 'Channel partners', icon: Handshake }] },
+  { title: 'OPERATIONS', items: [{ name: 'Inventory', icon: Building2 }, { name: 'Site visits', icon: MapPin, count: '8' }, { name: 'Bookings', icon: CalendarDays }, { name: 'Reports', icon: ChartNoAxesCombined }] },
 ]
 const statusClass: Record<string, string> = { 'New': 's-new', 'Contacted': 's-contacted', 'Qualified': 's-qualified', 'Site visit': 's-visit', 'Negotiation': 's-negotiation', 'Won': 's-won' }
 const money = (n?: number) => n == null ? '—' : n >= 10000000 ? `₹${(n / 10000000).toFixed(2).replace(/\.00$/, '')} Cr` : `₹${(n / 100000).toFixed(0)} L`
 const short = (s: string) => s.split(' ').map(x => x[0]).join('').slice(0, 2).toUpperCase()
 
 function App() {
-  const [page, setPage] = useState('Overview')
+  const [page, setPage] = useState(getPageFromPath)
+  const [authStatus, setAuthStatus] = useState<'checking' | 'authenticated' | 'unauthenticated'>('checking')
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null)
   const [leads, setLeads] = useState(initialLeads)
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('All leads')
-  const [modal, setModal] = useState(false)
+  const [editor, setEditor] = useState<{ kind: ResourceKind; item?: ResourceRecord } | null>(null)
   const [mobileNav, setMobileNav] = useState(false)
   const [notice, setNotice] = useState('')
-  const [form, setForm] = useState({ name: '', email: '', phone: '', source: 'Website', project: 'The Willow Residences', budget: '' })
+  const [databaseStatus, setDatabaseStatus] = useState<'checking' | 'connected' | 'disconnected'>('checking')
+  const [saving, setSaving] = useState(false)
+  const [resources, setResources] = useState<ResourceRows>(emptyResources)
 
-  useEffect(() => { fetch('/api/leads').then(r => r.ok ? r.json() : null).then(rows => { if (Array.isArray(rows) && rows.length) setLeads(rows.map((x: any, i: number) => ({ id: x.id.slice(-6).toUpperCase(), name: x.name, email: x.email, phone: x.phone, project: x.project?.name, source: x.source, status: x.status === 'SITE_VISIT' ? 'Site visit' : x.status[0] + x.status.slice(1).toLowerCase(), budget: x.budget, agent: x.assignedTo?.name || 'Unassigned', created: new Date(x.createdAt).toLocaleDateString(), avatar: short(x.name), color: ['rose', 'blue', 'purple', 'amber', 'pink', 'teal'][i % 6] }))) }).catch(() => {}) }, [])
+  function notify(message: string) { setNotice(message); window.setTimeout(() => setNotice(''), 2600) }
+  useEffect(() => {
+    let active = true
+    fetch('/api/auth/session')
+      .then(async response => {
+        if (!response.ok) throw new Error('Could not check your sign-in session.')
+        return await response.json() as { user: AuthUser | null }
+      })
+      .then(({ user }) => {
+        if (!active) return
+        setAuthUser(user)
+        setAuthStatus(user ? 'authenticated' : 'unauthenticated')
+        if (user && window.location.pathname === '/') {
+          window.history.replaceState({}, '', '/leads')
+          setPage('Leads')
+        }
+      })
+      .catch(error => {
+        console.error('Failed to check sign-in session.', error)
+        if (active) {
+          setAuthStatus('unauthenticated')
+          notify('Unable to verify your session. Please sign in to continue.')
+        }
+      })
+    return () => { active = false }
+  }, [])
+  useEffect(() => {
+    if (authStatus !== 'authenticated') return
+    let active = true
+    async function loadWorkspace() {
+      try {
+        const [health, ...responses] = await Promise.all([fetch('/api/health'), ...Object.values(resourceEndpoints).map(endpoint => fetch(`/api/${endpoint}`))])
+        if (!health.ok) throw new Error('PostgreSQL is unavailable. Start the database and check DATABASE_URL.')
+        if (responses.some(response => response.status === 401)) {
+          if (active) {
+            setAuthUser(null)
+            setAuthStatus('unauthenticated')
+          }
+          return
+        }
+        if (responses.some(response => !response.ok)) throw new Error('Could not load CRM records from PostgreSQL.')
+        const keys = Object.keys(resourceEndpoints) as ResourceKind[]
+        const rows = await Promise.all(responses.map(response => response.json() as Promise<ResourceRecord[]>))
+        const loaded = Object.fromEntries(keys.map((key, index) => [key, rows[index]])) as ResourceRows
+        if (active) {
+          setDatabaseStatus('connected')
+          setResources(loaded)
+          setLeads((loaded.leads as ApiLead[]).map(toLead))
+        }
+      } catch (error) {
+        console.error('Failed to load CRM records from PostgreSQL.', error)
+        if (active) {
+          setDatabaseStatus('disconnected')
+          notify(error instanceof Error ? error.message : 'Could not load CRM records from PostgreSQL.')
+        }
+      }
+    }
+    void loadWorkspace()
+    return () => { active = false }
+  }, [authStatus])
+  useEffect(() => {
+    const syncPage = () => setPage(getPageFromPath())
+    window.addEventListener('popstate', syncPage)
+    return () => window.removeEventListener('popstate', syncPage)
+  }, [])
 
   const visibleLeads = useMemo(() => leads.filter(l => `${l.name} ${l.email} ${l.project} ${l.agent} ${l.source}`.toLowerCase().includes(query.toLowerCase()) && (filter === 'All leads' || l.status.toLowerCase() === filter.toLowerCase())), [leads, query, filter])
-  const notify = (message: string) => { setNotice(message); window.setTimeout(() => setNotice(''), 2600) }
-  const changePage = (target: string) => { setPage(target); setMobileNav(false) }
-  const addLead = async (e: React.FormEvent) => {
-    e.preventDefault()
-    const newLead: Lead = { id: `EF-${2842 + leads.length - initialLeads.length}`, name: form.name, email: form.email, phone: form.phone, project: form.project, source: form.source, status: 'New', budget: Number(form.budget) || undefined, agent: 'Unassigned', created: 'Just now', avatar: short(form.name), color: 'teal' }
-    setLeads(current => [newLead, ...current]); setModal(false); setForm({ name: '', email: '', phone: '', source: 'Website', project: 'The Willow Residences', budget: '' }); notify('Lead added successfully')
-    try { await fetch('/api/leads', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: newLead.name, email: newLead.email, phone: newLead.phone, source: newLead.source, budget: newLead.budget, projectName: newLead.project }) }) } catch { /* UI remains available until a database connection is configured. */ }
+  const saveResource = async (kind: ResourceKind, id: string | undefined, values: Record<string, unknown>) => {
+    setSaving(true)
+    try {
+      const endpoint = resourceEndpoints[kind]
+      const response = await fetch(`/api/${endpoint}${id ? `/${encodeURIComponent(id)}` : ''}`, {
+        method: id ? 'PATCH' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(values),
+      })
+      const result: unknown = await response.json()
+      if (response.status === 401) {
+        setAuthUser(null)
+        setAuthStatus('unauthenticated')
+        return
+      }
+      if (!response.ok) {
+        const message = result && typeof result === 'object' && 'error' in result && typeof result.error === 'string' ? result.error : 'Could not save changes to PostgreSQL.'
+        throw new Error(message)
+      }
+      const keys = Object.keys(resourceEndpoints) as ResourceKind[]
+      const responses = await Promise.all(keys.map(async key => {
+        const refreshed = await fetch(`/api/${resourceEndpoints[key]}`)
+        if (refreshed.status === 401) {
+          setAuthUser(null)
+          setAuthStatus('unauthenticated')
+        }
+        if (!refreshed.ok) throw new Error(`Changes were saved, but ${resourceEndpoints[key]} could not be refreshed.`)
+        return await refreshed.json() as ResourceRecord[]
+      }))
+      const loaded = Object.fromEntries(keys.map((key, index) => [key, responses[index]])) as ResourceRows
+      setResources(loaded)
+      setLeads((loaded.leads as ApiLead[]).map(toLead))
+      setDatabaseStatus('connected')
+      setEditor(null)
+      notify(`${kind === 'leads' ? 'Lead' : kind === 'users' ? 'Team member' : kind === 'partners' ? 'Channel partner' : kind === 'projects' ? 'Project' : kind === 'visits' ? 'Site visit' : kind === 'bookings' ? 'Booking' : 'Automation'} ${id ? 'updated' : 'added'} successfully`)
+    } catch (error) {
+      console.error(`Failed to save ${kind} record to PostgreSQL.`, error)
+      notify(error instanceof Error ? error.message : 'Could not save changes to PostgreSQL.')
+    } finally {
+      setSaving(false)
+    }
   }
+
+  const changePage = (target: string) => {
+    const paths: Record<string, string> = { 'Marketing & Sales': '/marketing-sales', Leads: '/leads', Inventory: '/Inventory', Projects: '/Inventory', Reports: '/reports', 'Sales team': '/sales-team', 'Channel partners': '/channel-partners', 'Site visits': '/site-visits', Bookings: '/bookings', Automations: '/automations' }
+    window.history.pushState({}, '', paths[target] ?? '/')
+    setPage(target)
+    setMobileNav(false)
+  }
+  const onAuthenticated = (user: AuthUser) => {
+    setAuthUser(user)
+    setAuthStatus('authenticated')
+    setPage('Leads')
+    window.history.replaceState({}, '', '/leads')
+  }
+  const logout = async () => {
+    try {
+      const response = await fetch('/api/auth/logout', { method: 'POST' })
+      if (!response.ok) throw new Error('The server could not end your session.')
+      setAuthUser(null)
+      setAuthStatus('unauthenticated')
+      setPage('Leads')
+      window.history.replaceState({}, '', '/')
+    } catch (error) {
+      console.error('Failed to sign out.', error)
+      notify(error instanceof Error ? error.message : 'Could not sign out.')
+    }
+  }
+  const editLead = (lead: Lead) => {
+    const item = resources.leads.find(row => row.id === lead.databaseId)
+    if (item) setEditor({ kind: 'leads', item })
+  }
+  const activeResource = pageResources[page] ?? 'leads'
+  const openAdd = () => setEditor({ kind: activeResource })
+
+  if (authStatus === 'checking') return <div className="auth-loading" role="status">Checking your sign-in…</div>
+  if (authStatus === 'unauthenticated') return <AuthPage onAuthenticated={onAuthenticated} />
 
   return <div className="shell">
     <aside className={`sidebar ${mobileNav ? 'show-mobile' : ''}`}>
       <div className="brand"><div className="brand-mark"><Building2 size={17} strokeWidth={2.4} /></div><span>estate<span className="brand-light">flow</span></span><button className="mobile-close" onClick={() => setMobileNav(false)} aria-label="Close menu"><X size={19} /></button></div>
       <button className="org-switch"><span className="org-avatar">N</span><span className="org-name"><strong>Northstar Realty</strong><small>Workspace</small></span><ChevronDown size={15} className="org-chevron" /></button>
       <nav className="nav">{navSections.map(section => <div className="nav-section" key={section.title}><p>{section.title}</p>{section.items.map(item => <button key={item.name} onClick={() => changePage(item.name)} className={`nav-item ${page === item.name ? 'active' : ''}`}><item.icon size={17} strokeWidth={1.8} /><span>{item.name}</span>{item.count && <small>{item.count}</small>}</button>)}</div>)}<div className="nav-section tools-section"><p>TOOLS</p><button onClick={() => changePage('Automations')} className={`nav-item ${page === 'Automations' ? 'active' : ''}`}><Zap size={17} strokeWidth={1.8}/><span>Automations</span><span className="live-dot" /></button><button onClick={() => notify('Settings are up to date')} className="nav-item"><Settings size={17} strokeWidth={1.8}/><span>Settings</span></button></div></nav>
-      <div className="sidebar-bottom"><div className="help-card"><div className="help-icon"><Zap size={14}/></div><strong>Your team is on a roll</strong><span>12 deals moved forward this week.</span><button onClick={() => changePage('Reports')}>View activity <ArrowRight size={14}/></button><div className="help-spark"><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/></div></div><button className="profile"><div className="profile-avatar">RK</div><span><strong>Rhea Kapoor</strong><small>Workspace admin</small></span><MoreHorizontal size={19}/></button></div>
+      <div className="sidebar-bottom"><div className="help-card"><div className="help-icon"><Zap size={14}/></div><strong>Your team is on a roll</strong><span>12 deals moved forward this week.</span><button onClick={() => changePage('Reports')}>View activity <ArrowRight size={14}/></button><div className="help-spark"><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/></div></div><button className="profile" onClick={() => void logout()} aria-label={`Sign out ${authUser?.name ?? 'of your account'}`} title="Sign out"><div className="profile-avatar">{short(authUser?.name ?? 'User')}</div><span><strong>{authUser?.name ?? 'Workspace user'}</strong><small>Sign out</small></span><MoreHorizontal size={19}/></button></div>
     </aside>
     {mobileNav && <button className="mobile-overlay" onClick={() => setMobileNav(false)} aria-label="Close navigation" />}
-    <main className="main-area"><header className="topbar"><div className="breadcrumb"><button className="menu-trigger" onClick={() => setMobileNav(true)} aria-label="Open menu"><Menu size={20}/></button><span>Workspace</span><span className="crumb-sep">/</span><strong>{page}</strong></div><div className="top-actions"><span className="today-chip"><span className="green-pip"/>All systems operational</span><button className="icon-button" onClick={() => notify('You’re all caught up')} aria-label="Notifications"><Bell size={18}/><i/></button><div className="top-divider"/><div className="top-profile">RK</div></div></header>
-      <div className="page-wrap"><div className="welcome-row"><div><div className="eyebrow"><span className="sparkle">✳</span> WEDNESDAY, OCTOBER 14, 2026 <span className="eyebrow-divider">·</span> WEEK 42</div><h1>{page === 'Overview' ? <>A clearer view of <span>every deal.</span></> : page}</h1><p className="page-subtitle">{page === 'Overview' ? 'Here’s what’s happening across your portfolio today.' : getSubtitle(page)}</p></div><div className="welcome-actions"><button className="date-picker" onClick={() => notify('Showing this month’s activity')}><CalendarDays size={15}/> Oct 1 – Oct 31, 2026 <ChevronDown size={14}/></button><button className="primary-button" onClick={() => setModal(true)}><Plus size={16} strokeWidth={2.4}/> Add new lead</button></div></div>
-      {page === 'Overview' ? <Dashboard leads={leads} onNavigate={changePage} onAdd={() => setModal(true)} /> : page === 'Leads' ? <LeadsPage leads={visibleLeads} query={query} setQuery={setQuery} filter={filter} setFilter={setFilter} onAdd={() => setModal(true)} onSelect={changePage}/> : page === 'Site visits' ? <VisitsPage onNavigate={changePage}/> : page === 'Bookings' ? <BookingsPage/> : page === 'Sales team' ? <TeamPage/> : page === 'Channel partners' ? <PartnersPage/> : page === 'Reports' ? <ReportsPage/> : <AutomationPage onNotify={notify}/>}
-      <footer className="footer"><span>© 2026 Estateflow</span><span><i/> Your data is securely synced</span><a href="mailto:support@estateflow.io">Need a hand?</a></footer></div>
+    <main className="main-area"><header className="topbar"><div className="breadcrumb"><button className="menu-trigger" onClick={() => setMobileNav(true)} aria-label="Open menu"><Menu size={20}/></button><span>Workspace</span><span className="crumb-sep">/</span><strong>{page}</strong></div><div className="top-actions"><span className="today-chip"><span className="green-pip"/>{databaseStatus === 'connected' ? 'Database connected' : databaseStatus === 'checking' ? 'Connecting to database' : 'Database unavailable'}</span><button className="icon-button" onClick={() => notify('You’re all caught up')} aria-label="Notifications"><Bell size={18}/><i/></button><div className="top-divider"/><div className="logged-in-user" title={authUser?.email}><strong>{authUser?.name ?? 'Workspace user'}</strong><small>{authUser?.email}</small></div><button className="logout-button" onClick={() => void logout()}><LogOut size={15}/><span>Log out</span></button></div></header>
+      <div className="page-wrap"><div className="welcome-row"><div><div className="eyebrow"><span className="sparkle">✳</span> WEDNESDAY, OCTOBER 14, 2026 <span className="eyebrow-divider">·</span> WEEK 42</div><h1>{page === 'Marketing & Sales' ? <>Marketing &amp; sales <span>leads.</span></> : page}</h1><p className="page-subtitle">{page === 'Marketing & Sales' ? 'A clearer view of every lead, opportunity, and deal.' : getSubtitle(page)}</p></div><div className="welcome-actions">{page === 'Marketing & Sales' || page === 'Reports' ? <button className="date-picker" onClick={() => notify('Showing this month’s activity')}><CalendarDays size={15}/> Oct 1 – Oct 31, 2026 <ChevronDown size={14}/></button> : null}<button className="primary-button" onClick={openAdd}><Plus size={16} strokeWidth={2.4}/> Add {pageResources[page] === 'users' ? 'team member' : pageResources[page] === 'partners' ? 'channel partner' : pageResources[page] === 'projects' ? 'project' : pageResources[page] === 'visits' ? 'site visit' : pageResources[page] === 'bookings' ? 'booking' : pageResources[page] === 'automations' ? 'automation' : 'new lead'}</button></div></div>
+      {page === 'Marketing & Sales' ? <Dashboard leads={leads} onNavigate={changePage} onAdd={() => setEditor({ kind: 'leads' })} /> : page === 'Leads' ? <LeadsPage leads={visibleLeads} query={query} setQuery={setQuery} filter={filter} setFilter={setFilter} onAdd={openAdd} onSelect={changePage} onEdit={editLead}/> : page === 'Reports' ? <ReportsPage/> : <ResourcePage kind={activeResource} heading={page === 'Inventory' ? 'Inventory' : undefined} records={resources[activeResource]} onEdit={item => setEditor({ kind: activeResource, item })}/>}
+      <footer className="footer"><span>© 2026 Estateflow</span><span><i/> {databaseStatus === 'connected' ? 'Your data is synced to PostgreSQL' : databaseStatus === 'checking' ? 'Checking database connection' : 'Database connection required'}</span><a href="mailto:support@estateflow.io">Need a hand?</a></footer></div>
     </main>
-    {modal && <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget) setModal(false) }}><form className="modal" onSubmit={addLead}><div className="modal-top"><div className="modal-icon"><UserRound size={20}/></div><button type="button" className="icon-button" onClick={() => setModal(false)} aria-label="Close"><X size={19}/></button></div><h2>Let’s add a lead</h2><p>A little about your new prospective buyer.</p><label>Full name<input required placeholder="e.g. Aditi Mehra" value={form.name} onChange={e => setForm({...form, name: e.target.value})}/></label><div className="form-row"><label>Email address<input type="email" placeholder="aditi@email.com" value={form.email} onChange={e => setForm({...form, email: e.target.value})}/></label><label>Phone number<input placeholder="+91 98765 43210" value={form.phone} onChange={e => setForm({...form, phone: e.target.value})}/></label></div><div className="form-row"><label>Looking at<select value={form.project} onChange={e => setForm({...form, project: e.target.value})}><option>The Willow Residences</option><option>Parkview Heights</option><option>Olive Garden Villas</option><option>Meridian Business Park</option></select></label><label>Lead source<select value={form.source} onChange={e => setForm({...form, source: e.target.value})}><option>Website</option><option>Referral</option><option>Instagram</option><option>Facebook</option><option>99acres</option><option>Channel partner</option></select></label></div><label>Estimated budget (₹)<input inputMode="numeric" placeholder="e.g. 15000000" value={form.budget} onChange={e => setForm({...form, budget: e.target.value})}/></label><div className="modal-buttons"><button type="button" className="cancel-button" onClick={() => setModal(false)}>Maybe later</button><button type="submit" className="primary-button"><Plus size={15}/> Add this lead</button></div></form></div>}
+    {editor && <ResourceEditor key={`${editor.kind}-${typeof editor.item?.id === 'string' ? editor.item.id : 'new'}`} kind={editor.kind} item={editor.item} rows={resources} saving={saving} onClose={() => setEditor(null)} onSave={saveResource}/>}
     {notice && <div className="toast"><span><Check size={15}/></span>{notice}</div>}
   </div>
 }
 
-function getSubtitle(page: string) { const map: Record<string,string> = { 'Leads': 'Everyone you’re building a relationship with, in one place.', 'Sales team': 'Good people make great deals happen.', 'Channel partners': 'Your partners in finding the right buyers.', 'Site visits': 'Every first impression, thoughtfully planned.', 'Bookings': 'Big moments, beautifully organized.', 'Reports': 'Make decisions with the full picture.', 'Automations': 'Let the little things take care of themselves.' }; return map[page] || 'Everything you need to move the day forward.' }
+function toLead(row: ApiLead, index: number): Lead {
+  const status = row.status === 'SITE_VISIT' ? 'Site visit' : row.status[0] + row.status.slice(1).toLowerCase()
+  return { id: `EF-${row.id.slice(-6).toUpperCase()}`, databaseId: row.id, name: row.name, email: row.email ?? undefined, phone: row.phone ?? undefined, project: row.project?.name, source: row.source, status, budget: row.budget ?? undefined, agent: row.assignedTo?.name || 'Unassigned', created: new Date(row.createdAt).toLocaleDateString(), avatar: short(row.name), color: ['rose', 'blue', 'purple', 'amber', 'pink', 'teal'][index % 6] }
+}
+
+function getPageFromPath() {
+  const path = window.location.pathname.toLowerCase()
+  if (path === '/') return 'Leads'
+  if (path === '/leads') return 'Leads'
+  if (path === '/inventory') return 'Inventory'
+  if (path === '/marketing-sales') return 'Marketing & Sales'
+  const pages: Record<string, string> = { '/reports': 'Reports', '/sales-team': 'Sales team', '/channel-partners': 'Channel partners', '/site-visits': 'Site visits', '/bookings': 'Bookings', '/automations': 'Automations' }
+  return pages[path] ?? 'Marketing & Sales'
+}
+
+function getSubtitle(page: string) { const map: Record<string,string> = { 'Leads': 'Everyone you’re building a relationship with, in one place.', 'Inventory': 'Your property portfolio and project inventory.', 'Sales team': 'Good people make great deals happen.', 'Channel partners': 'Your partners in finding the right buyers.', 'Site visits': 'Every first impression, thoughtfully planned.', 'Bookings': 'Big moments, beautifully organized.', 'Reports': 'Make decisions with the full picture.', 'Automations': 'Let the little things take care of themselves.' }; return map[page] || 'Everything you need to move the day forward.' }
 
 function Dashboard({ leads, onNavigate, onAdd }: { leads: Lead[]; onNavigate: (s:string)=>void; onAdd:()=>void }) {
   const metrics = [{ label: 'Active leads', value: '1,284', change: '+12.8%', note: 'vs. last month', icon: Users, trend: 'up', color: 'mint' }, { label: 'Site visits', value: '86', change: '+8.2%', note: 'vs. last month', icon: MapPin, trend: 'up', color: 'blue' }, { label: 'Bookings', value: '32', change: '+18.4%', note: 'vs. last month', icon: CalendarDays, trend: 'up', color: 'purple' }, { label: 'Revenue pipeline', value: '₹24.8 Cr', change: '−2.1%', note: 'vs. last month', icon: TrendingUp, trend: 'down', color: 'amber' }]
@@ -76,7 +236,7 @@ function Dashboard({ leads, onNavigate, onAdd }: { leads: Lead[]; onNavigate: (s
 
 function LeadRow({ lead: l }: { lead: Lead }) { return <tr><td><div className="person-cell"><span className={`avatar ${l.color}`}>{l.avatar}</span><span><strong>{l.name}</strong><small>{l.email}</small></span></div></td><td><span className="project-cell">{l.project || '—'}</span></td><td><span className={`source-chip src-${l.source.toLowerCase().replace(/\s+/g,'-')}`}><i/>{l.source}</span></td><td><span className={`status-badge ${statusClass[l.status] || 's-new'}`}><i/>{l.status}</span></td><td><span className="owner-cell"><span className="owner-avatar">{short(l.agent)}</span>{l.agent.split(' ')[0]}</span></td></tr> }
 
-function LeadsPage({ leads, query, setQuery, filter, setFilter, onAdd, onSelect }: { leads: Lead[]; query:string; setQuery:(x:string)=>void; filter:string; setFilter:(x:string)=>void; onAdd:()=>void; onSelect:(x:string)=>void }) { return <div className="panel full-list-panel"><div className="list-toolbar"><div className="list-tabs">{['All leads','New','Contacted','Qualified','Site visit','Negotiation'].map(t=><button key={t} className={filter===t?'selected':''} onClick={()=>setFilter(t)}>{t}{t==='All leads'&&<small>1,284</small>}</button>)}</div><div className="list-actions"><label className="search-box"><Search size={16}/><input placeholder="Search leads..." value={query} onChange={e=>setQuery(e.target.value)}/><kbd>⌘ K</kbd></label><button className="filter-button" onClick={()=>setFilter(filter==='All leads'?'Qualified':'All leads')}><Filter size={15}/> Filter</button><button className="filter-button" onClick={()=>onSelect('Reports')}><Download size={15}/> Export</button></div></div><div className="big-table-wrap"><table className="leads-table big-table"><thead><tr><th>PROSPECT</th><th>PHONE</th><th>INTERESTED IN</th><th>BUDGET</th><th>SOURCE</th><th>STATUS</th><th>OWNER</th><th>ADDED</th></tr></thead><tbody>{leads.map(l=><tr key={l.id}><td><div className="person-cell"><span className={`avatar ${l.color}`}>{l.avatar}</span><span><strong>{l.name}</strong><small>{l.email||l.id}</small></span></div></td><td>{l.phone||'—'}</td><td>{l.project||'—'}</td><td>{money(l.budget)}</td><td><span className={`source-chip src-${l.source.toLowerCase().replace(/\s+/g,'-')}`}><i/>{l.source}</span></td><td><span className={`status-badge ${statusClass[l.status]||'s-new'}`}><i/>{l.status}</span></td><td><span className="owner-cell"><span className="owner-avatar">{short(l.agent)}</span>{l.agent}</span></td><td>{l.created}</td></tr>)}</tbody></table>{leads.length===0&&<div className="empty-state"><Users size={25}/><strong>No leads found</strong><span>Try another search, or add someone new.</span></div>}</div><div className="table-pagination"><span>Showing <strong>{leads.length ? 1 : 0}–{leads.length}</strong> of <strong>1,284</strong> leads</span><div><button disabled>‹</button><button className="page-selected">1</button><button>2</button><button>3</button><span>...</span><button>24</button><button>›</button></div></div></div> }
+function LeadsPage({ leads, query, setQuery, filter, setFilter, onAdd, onSelect, onEdit }: { leads: Lead[]; query:string; setQuery:(x:string)=>void; filter:string; setFilter:(x:string)=>void; onAdd:()=>void; onSelect:(x:string)=>void; onEdit:(lead:Lead)=>void }) { return <div className="panel full-list-panel"><div className="list-toolbar"><div className="list-tabs">{['All leads','New','Contacted','Qualified','Site visit','Negotiation'].map(t=><button key={t} className={filter===t?'selected':''} onClick={()=>setFilter(t)}>{t}{t==='All leads'&&<small>{leads.length}</small>}</button>)}</div><div className="list-actions"><label className="search-box"><Search size={16}/><input placeholder="Search leads..." value={query} onChange={e=>setQuery(e.target.value)}/><kbd>⌘ K</kbd></label><button className="filter-button" onClick={()=>setFilter(filter==='All leads'?'Qualified':'All leads')}><Filter size={15}/> Filter</button><button className="filter-button" onClick={()=>onSelect('Reports')}><Download size={15}/> Export</button></div></div><div className="big-table-wrap"><table className="leads-table big-table"><thead><tr><th>PROSPECT</th><th>PHONE</th><th>INTERESTED IN</th><th>BUDGET</th><th>SOURCE</th><th>STATUS</th><th>OWNER</th><th>ADDED</th><th>ACTIONS</th></tr></thead><tbody>{leads.map(l=><tr key={l.id}><td><div className="person-cell"><span className={`avatar ${l.color}`}>{l.avatar}</span><span><strong>{l.name}</strong><small>{l.email||l.id}</small></span></div></td><td>{l.phone||'—'}</td><td>{l.project||'—'}</td><td>{money(l.budget)}</td><td><span className={`source-chip src-${l.source.toLowerCase().replace(/\s+/g,'-')}`}><i/>{l.source}</span></td><td><span className={`status-badge ${statusClass[l.status]||'s-new'}`}><i/>{l.status}</span></td><td><span className="owner-cell"><span className="owner-avatar">{short(l.agent)}</span>{l.agent}</span></td><td>{l.created}</td><td><button type="button" className="resource-edit-button" onClick={()=>onEdit(l)}>Edit</button></td></tr>)}</tbody></table>{leads.length===0&&<div className="empty-state"><Users size={25}/><strong>No leads found</strong><span>Try another search, or add someone new.</span></div>}</div><div className="table-pagination"><span>Showing <strong>{leads.length ? 1 : 0}–{leads.length}</strong> of <strong>{leads.length}</strong> leads</span><div><button disabled>‹</button><button className="page-selected">1</button></div></div></div> }
 
 function VisitsPage({ onNavigate }: {onNavigate:(s:string)=>void}) { return <div className="operations-grid"><div className="panel operation-main"><div className="panel-heading"><div><h2>This week</h2><p>14 – 20 October · 8 visits scheduled</p></div><button className="date-picker" onClick={()=>{}}>This week <ChevronDown size={14}/></button></div><div className="visit-day"><h3>Today <span>Wednesday, 14 Oct</span></h3>{[['10:30 AM','Ananya Sharma','The Willow Residences','Rohan Mehta','First visit'],['12:15 PM','Arjun Kapoor','Parkview Heights','Priya Nair','Follow-up'],['3:00 PM','Dev Malhotra','Parkview Heights','Kabir Sethi','First visit']].map((v,i)=><div className="visit-card" key={v[1]}><strong className="visit-card-time">{v[0]}</strong><span className={`avatar ${['rose','blue','teal'][i]}`}>{short(v[1])}</span><div className="visit-card-person"><strong>{v[1]}</strong><span>{v[2]}</span></div><div className="visit-card-agent"><small>HOST</small><strong>{v[3]}</strong></div><span className="visit-tag">{v[4]}</span><button className="more-button"><Ellipsis size={18}/></button></div>)}</div><div className="visit-day"><h3>Tomorrow <span>Thursday, 15 Oct</span></h3>{[['11:00 AM','Meera Iyer','The Willow Residences','Rohan Mehta','First visit'],['2:30 PM','Vikram Patel','Olive Garden Villas','Priya Nair','Follow-up']].map((v,i)=><div className="visit-card" key={v[1]}><strong className="visit-card-time">{v[0]}</strong><span className={`avatar ${['purple','amber'][i]}`}>{short(v[1])}</span><div className="visit-card-person"><strong>{v[1]}</strong><span>{v[2]}</span></div><div className="visit-card-agent"><small>HOST</small><strong>{v[3]}</strong></div><span className="visit-tag">{v[4]}</span><button className="more-button"><Ellipsis size={18}/></button></div>)}</div></div><div className="panel side-summary"><span className="stat-icon blue"><MapPin size={17}/></span><h2>The little moments add up.</h2><p>Every visit is a chance to help someone find where they belong.</p><div className="summary-stat"><span>This month</span><strong>86 visits</strong><small><ArrowUpRight size={13}/> 8.2% vs September</small></div><div className="summary-stat"><span>Conversion to booking</span><strong>37.2%</strong><small>Among completed visits</small></div><button className="text-link" onClick={()=>onNavigate('Reports')}>Explore visit insights <ArrowRight size={14}/></button></div></div> }
 

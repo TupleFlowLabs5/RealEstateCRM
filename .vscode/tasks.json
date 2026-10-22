@@ -1,0 +1,21 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Build Estateflow CRM",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"--prefix",
+				"RealEstateCRM",
+				"run",
+				"build"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		}
+	]
+}

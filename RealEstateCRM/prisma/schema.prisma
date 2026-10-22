@@ -45,6 +45,27 @@ model User {
   updatedAt DateTime @updatedAt
 }
 
+model Account {
+  id String @id @default(cuid())
+  name String
+  email String @unique
+  passwordHash String
+  sessions AuthSession[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model AuthSession {
+  id String @id @default(cuid())
+  tokenHash String @unique
+  accountId String
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  @@index([accountId])
+  @@index([expiresAt])
+}
+
 model ChannelPartner {
   id String @id @default(cuid())
   name String

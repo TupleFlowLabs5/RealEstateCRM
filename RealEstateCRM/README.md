@@ -10,19 +10,30 @@ A responsive property sales CRM dashboard for real-estate teams. Built with Reac
 - Overview and performance reports, plus configurable workflow automations
 - A Prisma schema and seed script for PostgreSQL persistence
 
+## Workspace modules
+
+Register or log in at `/` to open the Leads workspace. Sign-in uses a browser-session cookie, so closing the browser ends the client session; the **Log out** control also ends the session and returns to `/`. Accounts are stored separately from sales-team members, passwords are hashed, and CRM API routes require a valid session. The Marketing & Sales dashboard remains available at `/marketing-sales`; inventory uses the existing project records at `/Inventory`.
+
 ## Start locally
 
-Use Node.js 20+ and PostgreSQL 14+. Create the `estateflow` PostgreSQL database, copy `.env.example` to `.env`, and update `DATABASE_URL` for your PostgreSQL user and connection.
+Use Node.js 20+ and Docker Compose. The included Compose file runs PostgreSQL 16 locally with a persistent volume.
 
 ```bash
 npm install
 npm run db:generate
-npm run db:migrate -- --name init
-npm run db:seed
+```
+
+Copy `.env.example` to `.env` (`Copy-Item .env.example .env` in PowerShell), then start PostgreSQL and initialize the schema with seed data:
+
+```bash
+docker compose up -d db
+npm run db:setup
 npm run dev
 ```
 
-The Vite client runs at <http://localhost:5173> and forwards `/api` requests to the Express server at <http://localhost:3001>. If the database has not been configured, the sample dashboard remains usable and lead entry still appears immediately in the current session; database writes become persistent when the PostgreSQL-backed API is running.
+The Vite client runs at <http://localhost:5173> and forwards `/api` requests to the Express server at <http://localhost:3001>. Leads and the other CRM records are stored in PostgreSQL through Prisma; the seeded sample records make the dashboard immediately usable. The Compose volume preserves data when the database container is stopped or restarted. To stop PostgreSQL without deleting data, run `docker compose down`; to permanently remove the local database and its data, run `docker compose down -v`.
+
+Set `DATABASE_URL` in `.env` to use another PostgreSQL instance. Keep credentials out of source control.
 
 ## Deploy on Vercel
 
