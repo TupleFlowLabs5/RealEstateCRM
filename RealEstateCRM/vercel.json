@@ -5,8 +5,8 @@
   "outputDirectory": "dist",
   "rewrites": [
     {
-      "source": "/(.*)",
-      "destination": "/index.html"
+      "source": "/api/(.*)",
+      "destination": "/api?__api_path=$1"
     }
   ]
 }

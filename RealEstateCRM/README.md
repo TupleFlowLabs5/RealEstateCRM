@@ -35,13 +35,17 @@ The Vite client runs at <http://localhost:5173> and forwards `/api` requests to 
 
 Set `DATABASE_URL` in `.env` to use another PostgreSQL instance. Keep credentials out of source control.
 
+## Password reset email
+
+Password recovery sends one-time links through Resend. Set `RESEND_API_KEY` to a Resend API key and `RESEND_FROM_EMAIL` to a sender verified in Resend. Set `APP_URL` to the app's public origin (for example, `https://realestatecrm-puce.vercel.app`) so reset links return to the right deployment. Add these values as Vercel environment variables for Production and Preview; keep the API key secret. Reset links expire after one hour, are single-use, and resetting a password invalidates existing sessions.
+
 ## Deploy on Vercel
 
 The repo includes `vercel.json`: Vercel builds the Vite client into `dist`, serves the Express API as a Node.js function for `/api/*`, and falls back to the SPA for page routes. Import the repository into Vercel and keep the project root at this directory. The configured build command generates Prisma Client and builds the app.
 
 1. Provision a PostgreSQL database through a Vercel Marketplace integration or another PostgreSQL provider. Vercel Postgres is no longer offered for new projects.
-2. Add the provider’s PostgreSQL connection string as `DATABASE_URL` in the Vercel project’s Production and Preview environment variables. For serverless deployments, use the provider’s pooled connection URL when available.
-3. Apply the schema migrations against that database with `pnpm run db:deploy`, then deploy the project.
+2. Add the provider’s pooled PostgreSQL connection string as `DATABASE_URL` in the Vercel project’s Production and Preview environment variables. For Neon, also add the direct (unpooled) connection string as `DATABASE_URL_UNPOOLED`; Prisma uses the pooled URL for app queries and the direct URL for schema migrations.
+3. Apply the schema migrations against that database with `pnpm run db:deploy`, then deploy the project. The local Neon CLI `neon deploy` command can pull both connection strings into `.env`.
 
 The `.env` file is for local use only; add secrets in Vercel’s Environment Variables settings and do not commit them. The hosted API needs a reachable PostgreSQL database to save CRM records.
 
@@ -50,6 +54,8 @@ The `.env` file is for local use only; add secrets in Vercel’s Environment Var
 | Method | Route | Purpose |
 | --- | --- | --- |
 | GET | `/api/health` | Server and PostgreSQL health |
+| POST | `/api/auth/forgot-password` | Request an expiring password reset email |
+| POST | `/api/auth/reset-password` | Set a new password using a valid reset token |
 | GET | `/api/overview` | CRM KPI counts and booked value |
 | GET / POST | `/api/leads` | List/search leads and add a lead |
 | PATCH | `/api/leads/:id` | Update lead fields or stage |

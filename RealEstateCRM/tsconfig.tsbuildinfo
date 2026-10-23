@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/authpage.tsx","./src/resourcemanager.tsx","./src/main.tsx","./server/app.ts","./server/index.ts","./api/[...path].ts","./prisma/seed.ts","./vite.config.ts"],"version":"5.7.3"}
+{"root":["./src/app.tsx","./src/authpage.tsx","./src/resourcemanager.tsx","./src/main.tsx","./server/app.ts","./server/index.ts","./api/index.ts","./prisma/seed.ts","./vite.config.ts"],"version":"5.7.3"}
